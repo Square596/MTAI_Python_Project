@@ -3,8 +3,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# .DS_Store
+.DS_Store
+
 # ruff
 .ruff_cache/*
+
+# tg_bot_token
+.tg_bot_token
 
 # C extensions
 *.so

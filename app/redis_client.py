@@ -1,92 +1,28 @@
-import redis
-import numpy as np
-from sklearn.datasets import load_digits
-from app.const import REDIS_HOST, REDIS_PORT, INDEX_NAME, VECTOR_DIM
-from redis.commands.search.field import (
-    TagField,
-    VectorField,
-)
-from redis.commands.search.indexDefinition import IndexDefinition, IndexType
-from time import ctime
-import json
+import os
+from time import ctime, sleep
 
+import numpy as np
+import redis
+from redis.commands.search.field import TagField, VectorField
+from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+from redis.commands.search.query import Query
+from sklearn.datasets import load_digits
+
+from app.const import INDEX_NAME, VECTOR_DIM
 
 MNIST_SCHEMA = (
     TagField("$.label", as_name="label"),
     VectorField(
-        "$.embedding",
+        "$.image",
         "HNSW",
         {
-            "TYPE": "FLOAT32",
+            "TYPE": "FLOAT16",
             "DIM": VECTOR_DIM,
             "DISTANCE_METRIC": "COSINE",
         },
-        as_name="embedding",
+        as_name="image",
     ),
 )
-
-
-def load_data_to_redis(r, images, labels):
-    print(ctime(), f"Start uploading {len(images)} images to Redis")
-
-    current_db_size = r.dbsize()
-
-    pipeline = r.pipeline()
-    for i, (image, label) in enumerate(zip(images, labels), start=1):
-        redis_key = f"{INDEX_NAME}:{current_db_size + i :05}"
-
-        store_label = {
-            "label": label,
-        }
-
-        pipeline.json().set(redis_key, "$", store_label)
-        pipeline.json().set(redis_key, "$.image", image)
-
-        print(ctime(), f"Requested to upload an image. {redis_key=}")
-    
-    print(ctime(), "Executing requests")
-    pipeline.execute()
-
-    assert r.dbsize() == len(labels), "there is missing data"
-    print(ctime(), f"All images have been added to Redis {INDEX_NAME}")
-
-    # print(ctime(), "Start uploading images")
-
-    # pipeline = r.pipeline()
-    # for i, image in enumerate(images, start=1):
-    #     redis_key = f"{INDEX_NAME}:{current_db_size + i :05}"
-
-    #     pipeline.json().set(redis_key, "$.image", image.tolist())
-
-    # pipeline.execute()
-
-    # print(ctime(), f"All images have been added to Redis {INDEX_NAME}")
-
-
-    # for i, (image, label) in enumerate(zip(images, labels)):
-    #     key = f"{INDEX_NAME}:{current_db_size + i}"
-    #     r.hset(
-    #         key,
-    #         mapping={
-    #             "label": label,
-    #             "embedding": np.array(image, dtype=np.float32).tobytes(),
-    #         },
-    #     )
-    #     print(ctime(), f"{current_db_size + i} has been added to Redis {INDEX_NAME}")
-    print(ctime(), f"Current DB size: {r.dbsize()}")
-
-
-def create_index(r):
-    print(ctime(), "Start creating the index")
-
-    try:
-        definition = IndexDefinition(prefix=[f"{INDEX_NAME}:"], index_type=IndexType.JSON)
-        status = r.ft("idx:mnist_vss").create_index(fields=MNIST_SCHEMA, definition=definition)
-        # r.ft(INDEX_NAME).create_index(MNIST_SCHEMA)
-
-        print(ctime(), f"Index has been created. {status=}")
-    except Exception as e:
-        print(ctime(), f"Index creation error: {e}")
 
 
 def load_mnist():
@@ -97,19 +33,83 @@ def load_mnist():
 
     print(ctime(), "MNIST dataset has been downloaded succesfully")
 
-    print(ctime(), "Converting to FP32")
-    images = mnist.data.astype(np.float32).tolist()
-    labels = mnist.target.astype(np.str_).tolist()
-    print(ctime(), "Converting completed")
+    images = mnist.data.astype(np.float16)
+    labels = mnist.target.astype(np.str_)
 
     return images, labels
 
 
-# if __name__ == "__main__":
+def load_data_to_redis(r, images, labels):
+    print(ctime(), f"Start uploading {len(images)} images to Redis")
 
-#     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-#     r.flushdb()  # clean the redis db
+    start_db_size = r.dbsize()
 
-#     images, labels = load_mnist(logger)
-#     load_data_to_redis(r, images, labels, logger)
-#     create_index(r)
+    pipeline = r.pipeline()
+    for i, (image, label) in enumerate(zip(images, labels), start=1):
+        redis_key = f"{INDEX_NAME}:{start_db_size + i :05}"
+
+        store_label = {
+            "label": label,
+        }
+
+        pipeline.json().set(redis_key, "$", store_label)
+        pipeline.json().set(redis_key, "$.image", image)
+
+        print(ctime(), f"Requested to upload an image. {redis_key=}")
+
+    print(ctime(), "Executing requests")
+    pipeline.execute()
+
+    assert r.dbsize() - start_db_size == len(labels), "there is missing data"
+    print(ctime(), f"All images have been added to Redis {INDEX_NAME}")
+    print(ctime(), f"Current DB size: {r.dbsize()}")
+
+
+def create_index(r):
+    print(ctime(), "Start creating the index")
+
+    definition = IndexDefinition(prefix=[f"{INDEX_NAME}:"], index_type=IndexType.JSON)
+    status = r.ft("idx:mnist_vss").create_index(
+        fields=MNIST_SCHEMA, definition=definition
+    )
+
+    info = r.ft("idx:mnist_vss").info()
+    num_docs = info["num_docs"]
+    indexing_failures = info["hash_indexing_failures"]
+
+    print(ctime(), "Waiting for the index construction...")
+    while num_docs != r.dbsize():
+        sleep(0.05)
+        info = r.ft("idx:mnist_vss").info()
+        num_docs = info["num_docs"]
+        indexing_failures = info["hash_indexing_failures"]
+
+        print(ctime(), f"{num_docs / r.dbsize() * 100 :.1f}%...")
+
+    print(ctime(), f"Index has been created. {status=}")
+
+    print(ctime(), f"{num_docs} documents indexed with {indexing_failures} failures")
+
+
+def predict_label(r, image):
+    rquery = (
+        Query("(*)=>[KNN 1 @image $query_image AS score]")
+        .sort_by("score")
+        .return_fields("score", "label")
+        .dialect(2)
+    )
+
+    result_doc = (
+        r.ft("idx:mnist_vss").search(rquery, {"query_image": image.tobytes()}).docs[0]
+    )
+    return {"score": round(1 - float(result_doc.score), 2), "label": result_doc.label}
+
+
+if __name__ == "__main__":
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    r = redis.Redis(host=redis_host, port=6379, decode_responses=True)
+    r.flushdb()  # clean the redis db
+
+    images, labels = load_mnist()
+    load_data_to_redis(r, images, labels)
+    create_index(r)

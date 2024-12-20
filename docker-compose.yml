@@ -20,4 +20,4 @@ services:
       - REDIS_HOST=redis
     volumes:
       - .:/app
-    shm_size: '2gb'
+    shm_size: '1gb'
