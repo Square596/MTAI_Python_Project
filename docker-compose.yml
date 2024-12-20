@@ -1,0 +1,23 @@
+services:
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis-container
+    ports:
+      - "6379:6379"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mnist_bot:latest
+    container_name: python-app
+    tty: true
+    depends_on:
+      - redis
+    ports:
+      - "5000:5000"
+    environment:
+      - REDIS_HOST=redis
+    volumes:
+      - .:/app
+    shm_size: '2gb'

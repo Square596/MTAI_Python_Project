@@ -1,0 +1,23 @@
+# Ignore Python cache files
+*.pyc
+__pycache__/
+
+# Virtual environment
+.venv/
+
+# Git files
+.git/
+.gitignore
+
+# Environment variables
+.env
+
+# Redis data and logs (if persistent storage isn't needed)
+data/
+logs/
+
+# IDE settings
+.vscode/
+
+# ruff
+.ruff_cache/*
