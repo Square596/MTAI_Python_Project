@@ -3,9 +3,9 @@
 Telegram bot for classifying MNIST-like images using Redis for storage and indexing.
 
 ## Features
-`/init`: Initialize Redis index with MNIST data.
-`/add <label>`: Add a custom image to Redis.
-`/predict`: Predict the label of an image.
+- `/init`: Initialize Redis index with MNIST data.
+- `/add <label>`: Add a custom image to Redis.
+- `/predict`: Predict the label of an image.
 
 ## Setup
 
@@ -26,11 +26,11 @@ docker-compose up --build
 ### Running the Bot
 Once the containers are up, the bot will be live on Telegram. Use the following commands:
 
-`/start`: Start the bot.
-`/help`: Show help.
-`/init`: Initialize Redis index.
-`/add <label>`: Add an image to Redis.
-`/predict`: Predict the label of an image.
+- `/start`: Start the bot.
+- `/help`: Show help.
+- `/init`: Initialize Redis index.
+- `/add <label>`: Add an image to Redis.
+- `/predict`: Predict the label of an image.
 
 ### Stop the Containers
 To stop the containers:
